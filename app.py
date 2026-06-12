@@ -14,6 +14,7 @@ st.markdown("""
 .box{padding:1rem 1.1rem;border-radius:14px;background:#f8fafc;border-left:5px solid #2563eb;margin:.8rem 0}
 .warn{padding:1rem 1.1rem;border-radius:14px;background:#fff7ed;border-left:5px solid #f97316;margin:.8rem 0}
 .ok{padding:1rem 1.1rem;border-radius:14px;background:#f0fdf4;border-left:5px solid #16a34a;margin:.8rem 0}
+.pred{padding:1rem 1.1rem;border-radius:14px;background:#eef2ff;border-left:5px solid #6366f1;margin:.8rem 0}
 .small{color:#64748b;font-size:.92rem}
 </style>
 """, unsafe_allow_html=True)
@@ -26,6 +27,16 @@ TOPICS = [
     "⑤ 집단 사이 이동의 영향",
     "⑥ 짝짓기 방식의 영향",
 ]
+
+# 각 주제가 '하디-바인베르크 평형의 5가지 조건' 중 무엇을 깨는지 명시
+BROKEN = {
+    "① 평형 상태 살펴보기": "다섯 가지 평형 조건이 모두 충족된 이상적인 상태 (어떤 조건도 깨지 않음)",
+    "② 집단 크기와 우연의 영향": "[큰 집단] 조건 — 집단이 충분히 커야 우연의 영향이 작아진다",
+    "③ 자연선택의 영향": "[자연선택 없음] 조건 — 모든 유전자형의 생존·번식 확률이 같아야 한다",
+    "④ 돌연변이의 영향": "[돌연변이 없음] 조건 — 대립유전자가 다른 것으로 바뀌지 않아야 한다",
+    "⑤ 집단 사이 이동의 영향": "[집단 간 이동 없음] 조건 — 다른 집단과 개체 교류가 없어야 한다",
+    "⑥ 짝짓기 방식의 영향": "[자유로운 짝짓기] 조건 — 모든 개체가 무작위로 짝짓기해야 한다",
+}
 
 GUIDE = {
     "① 평형 상태 살펴보기": {
@@ -74,7 +85,12 @@ GUIDE = {
 
 COLOR = {"A": "#2563eb", "B": "#ea580c", "AA": "#0f766e", "Aa": "#7c3aed", "aa": "#dc2626"}
 
+# ---------------------------------------------------------------------------
+# 모델 (점화식)
+# ---------------------------------------------------------------------------
+
 def geno(p):
+    """무작위 교배 가정에서 갓 태어난 자손(접합자)의 유전자형 비율 (p², 2pq, q²)."""
     q = 1 - p
     return p * p, 2 * p * q, q * q
 
@@ -119,6 +135,7 @@ def sim_migration(p0, incoming_A, incoming_rate, gen):
     return make_rows(vals)
 
 def sim_mating(p0, close_degree, gen):
+    """근친교배: 대립유전자 비율은 유지되고 이형접합(Aa)만 (1-F)^g로 감소."""
     q = 1 - p0
     H0 = 2 * p0 * q
     rows = []
@@ -155,12 +172,37 @@ def sim_by_topic(topic, p):
         return sim_mating(p["start"], p["close"], p["gen"])
     raise ValueError("지원하지 않는 주제입니다.")
 
-def allele_fig(a, b, title):
+def equilibrium_value(topic, p):
+    """이론적으로 수렴하는 A 비율(평형값). 없으면 None."""
+    if topic == "④ 돌연변이의 영향":
+        denom = p["A_to_a"] + p["a_to_A"]
+        if denom > 0:
+            return p["a_to_A"] / denom
+        return None
+    if topic == "⑤ 집단 사이 이동의 영향":
+        if p["incoming_rate"] > 0:
+            return p["incoming_A"]
+        return None
+    return None
+
+# ---------------------------------------------------------------------------
+# 그래프
+# ---------------------------------------------------------------------------
+
+def allele_fig(a, b, title, hlines=None):
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=a["세대"], y=a["A 비율"], name="조건 A: A", mode="lines", line=dict(color=COLOR["A"], width=3)))
     fig.add_trace(go.Scatter(x=b["세대"], y=b["A 비율"], name="조건 B: A", mode="lines", line=dict(color=COLOR["B"], width=3)))
     fig.add_trace(go.Scatter(x=a["세대"], y=a["a 비율"], name="조건 A: a", mode="lines", line=dict(color=COLOR["A"], width=2, dash="dot")))
     fig.add_trace(go.Scatter(x=b["세대"], y=b["a 비율"], name="조건 B: a", mode="lines", line=dict(color=COLOR["B"], width=2, dash="dot")))
+    # 이론적 평형값(수렴값) 기준선
+    if hlines:
+        for y, color, label in hlines:
+            if y is None:
+                continue
+            fig.add_hline(y=y, line=dict(color=color, width=1.5, dash="dash"),
+                          annotation_text=label, annotation_position="right",
+                          annotation_font=dict(color=color, size=11))
     fig.update_layout(title=title, xaxis_title="세대", yaxis_title="대립유전자 비율", yaxis=dict(range=[0, 1]), height=420, legend=dict(orientation="h", y=1.15))
     return fig
 
@@ -184,6 +226,10 @@ def drift_fig(run_a, sum_a, run_b, sum_b):
     fig.add_trace(go.Scatter(x=sum_b["세대"], y=sum_b["평균_A"], name="조건 B 평균", mode="lines", line=dict(color=COLOR["B"], width=4)))
     fig.update_layout(title="집단 크기에 따른 우연의 영향 비교", xaxis_title="세대", yaxis_title="A 대립유전자 비율", yaxis=dict(range=[0, 1]), height=450, legend=dict(orientation="h", y=1.16))
     return fig
+
+# ---------------------------------------------------------------------------
+# 표/문자열 유틸
+# ---------------------------------------------------------------------------
 
 def param_text(p):
     labels = {
@@ -222,13 +268,27 @@ def drift_row(label, df, p):
         "조건값": param_text(p),
     }
 
+def summarize_for_record(summary_df):
+    """결과 요약표를 한 줄 문자열로 압축(탐구 기록 자동 첨부용)."""
+    parts = []
+    for _, row in summary_df.iterrows():
+        kv = ", ".join(f"{c}={row[c]}" for c in summary_df.columns if c not in ("조건", "조건값"))
+        parts.append(f"[{row['조건']}] {kv}")
+    return " / ".join(parts)
+
 def to_csv(df):
     return df.to_csv(index=False).encode("utf-8-sig")
+
+# ---------------------------------------------------------------------------
+# 세션 상태
+# ---------------------------------------------------------------------------
 
 if "records" not in st.session_state:
     st.session_state.records = []
 if "show" not in st.session_state:
     st.session_state.show = False
+if "prev_topic" not in st.session_state:
+    st.session_state.prev_topic = None
 
 st.markdown("""
 <div class="hero">
@@ -236,6 +296,10 @@ st.markdown("""
 <p>평형 조건이 깨질 때 집단의 유전적 구성이 어떻게 변하는지 조건 A와 조건 B로 비교해 봅니다.</p>
 </div>
 """, unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------------
+# 사이드바
+# ---------------------------------------------------------------------------
 
 with st.sidebar:
     st.header("탐구 설정")
@@ -248,18 +312,29 @@ with st.sidebar:
         common_start = st.slider("처음 A 대립유전자 비율", 0.01, 0.99, 0.50, 0.01)
         st.caption(f"처음 a 대립유전자 비율: {1 - common_start:.2f}")
 
-    experiment_no = st.number_input(
-        "반복 실험 번호",
-        min_value=1,
-        max_value=99999,
-        value=2026,
-        step=1,
-        help="우연이 들어가는 실험에서 결과를 다시 똑같이 재현하기 위한 번호입니다. 번호를 바꾸면 다른 우연 결과를 볼 수 있습니다.",
-    )
+    # 시드(반복 실험 번호)는 우연이 들어가는 ②번에서만 노출
+    if topic == "② 집단 크기와 우연의 영향":
+        experiment_no = st.number_input(
+            "반복 실험 번호",
+            min_value=1, max_value=99999, value=2026, step=1,
+            help="우연이 들어가는 실험에서 결과를 다시 똑같이 재현하기 위한 번호입니다. 번호를 바꾸면 다른 우연 결과를 볼 수 있습니다.",
+        )
+    else:
+        experiment_no = 2026
+
+# 주제를 바꾸면 결과 화면을 초기화 → 학생이 예상을 먼저 쓰도록 유도
+if st.session_state.prev_topic is not None and st.session_state.prev_topic != topic:
+    st.session_state.show = False
+st.session_state.prev_topic = topic
+
+# ---------------------------------------------------------------------------
+# 1. 탐구 질문과 예상
+# ---------------------------------------------------------------------------
 
 st.subheader("1. 탐구 질문과 예상 세우기")
 st.markdown(f"""
 <div class="box">
+<b>이번 주제에서 깨는 평형 조건</b><br>{BROKEN[topic]}<br><br>
 <b>탐구 질문</b><br>{GUIDE[topic]["q"]}<br><br>
 <span class="small">그래프를 보기 전에 먼저 예상해 보세요. 예상이 틀려도 괜찮습니다.</span>
 </div>
@@ -273,6 +348,10 @@ with st.form("plan"):
 
 if not prediction.strip():
     st.markdown("<div class='warn'><b>수업 안내</b><br>학생이 결과를 보기 전에 예상부터 쓰도록 안내하면 탐구 활동으로 활용하기 좋습니다.</div>", unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------------
+# 2. 조건 A / 조건 B 설정
+# ---------------------------------------------------------------------------
 
 st.subheader("2. 조건 A와 조건 B 설정하기")
 st.markdown(f"""
@@ -354,26 +433,50 @@ if st.button("시뮬레이션 실행하기", type="primary"):
 if not st.session_state.show:
     st.info("조건을 설정한 뒤 '시뮬레이션 실행하기' 버튼을 누르세요.")
 
+# ---------------------------------------------------------------------------
+# 3. 결과 관찰
+# ---------------------------------------------------------------------------
+
 if st.session_state.show:
     st.subheader("3. 결과 관찰하기")
+
+    # 예상-관찰-설명(POE): 결과를 보기 직전, 내가 쓴 예상을 다시 보여 줌
+    if prediction.strip():
+        reason_html = f"<br><span class='small'>예상한 까닭: {reason.strip()}</span>" if reason.strip() else ""
+        st.markdown(f"""
+<div class="pred">
+<b>그래프를 보기 전 내가 적은 예상</b><br>{prediction.strip()}{reason_html}<br><br>
+<span class="small">아래 결과와 내 예상이 같은지 다른지 비교하면서 보세요.</span>
+</div>
+""", unsafe_allow_html=True)
 
     if topic == "② 집단 크기와 우연의 영향":
         run_a, sum_a = sim_drift(pa["start"], pa["N"], gen, pa["repeats"], int(experiment_no))
         run_b, sum_b = sim_drift(pb["start"], pb["N"], gen, pb["repeats"], int(experiment_no) + 777)
         st.plotly_chart(drift_fig(run_a, sum_a, run_b, sum_b), use_container_width=True)
+        st.caption("얇은 선은 각 반복 실험, 굵은 선은 평균입니다. 집단이 작을수록 선이 넓게 흩어집니다. (조건 A·B에 서로 다른 반복 실험 번호를 적용해 우연 흐름을 다르게 했습니다.)")
         summary = pd.DataFrame([drift_row("A", run_a, pa), drift_row("B", run_b, pb)])
     else:
         df_a, df_b = sim_by_topic(topic, pa), sim_by_topic(topic, pb)
         if topic == "① 평형 상태 살펴보기":
             st.plotly_chart(genotype_fig(df_a, df_b, "유전자형 비율 비교"), use_container_width=True)
+            st.caption("매 세대 무작위 교배를 가정한 자손(접합자) 기준 비율입니다. 평형 상태에서는 세대가 지나도 비율이 변하지 않습니다.")
         elif topic == "⑥ 짝짓기 방식의 영향":
             left, right = st.columns(2)
             with left:
                 st.plotly_chart(allele_fig(df_a, df_b, "대립유전자 비율 변화"), use_container_width=True)
             with right:
                 st.plotly_chart(genotype_fig(df_a, df_b, "유전자형 비율 변화"), use_container_width=True)
+            st.caption("대립유전자(A·a) 비율은 그대로지만 유전자형(AA·Aa·aa) 비율은 변할 수 있다는 점에 주목하세요.")
         else:
-            st.plotly_chart(allele_fig(df_a, df_b, "대립유전자 비율 변화"), use_container_width=True)
+            hlines = [
+                (equilibrium_value(topic, pa), COLOR["A"], "조건 A 수렴값"),
+                (equilibrium_value(topic, pb), COLOR["B"], "조건 B 수렴값"),
+            ]
+            st.plotly_chart(allele_fig(df_a, df_b, "대립유전자 비율 변화", hlines=hlines), use_container_width=True)
+            if any(y is not None for y, _, _ in hlines):
+                st.caption("점선 가로선은 이론적으로 수렴하는 A 비율(평형값)입니다. 곡선이 이 값으로 가까워지는지 확인해 보세요.")
+            st.caption("AA·Aa·aa 비율은 매 세대 무작위 교배를 가정한 자손(접합자) 기준입니다. 작은 집단에서는 선택·돌연변이도 우연으로 흔들릴 수 있으나, 여기서는 요인을 분리해 보기 위해 매끈한 곡선으로 보여 줍니다.")
             with st.expander("AA, Aa, aa 비율 그래프도 보기"):
                 st.plotly_chart(genotype_fig(df_a, df_b, "유전자형 비율 변화"), use_container_width=True)
         summary = pd.DataFrame([result_row("A", df_a, pa), result_row("B", df_b, pb)])
@@ -382,7 +485,33 @@ if st.session_state.show:
     st.dataframe(summary, use_container_width=True, hide_index=True)
     st.download_button("결과 요약표 내려받기", data=to_csv(summary), file_name="hardy_weinberg_result_summary.csv", mime="text/csv")
 
-    st.subheader("4. 관찰 기록 작성하기")
+    # -----------------------------------------------------------------------
+    # 5. 자료 해석 질문 (기록 저장보다 먼저 렌더 → 한 번에 같이 저장)
+    # -----------------------------------------------------------------------
+    st.subheader("4. 자료 해석 질문")
+    st.markdown("""
+<div class="warn">
+<b>주의</b><br>
+아래 질문에는 예시 답안을 보여주지 않습니다. 자신이 실행한 조건 A, 조건 B의 그래프와 표를 근거로 직접 작성해 보세요.
+</div>
+""", unsafe_allow_html=True)
+
+    q_answers = []
+    for i, q in enumerate(GUIDE[topic]["questions"], start=1):
+        ans = st.text_area(f"질문 {i}. {q}", placeholder="그래프와 표에서 확인한 근거를 포함해 자신의 말로 작성하세요.", key=f"q_{topic}_{i}")
+        q_answers.append((q, ans))
+
+    with st.expander("답을 쓰기 어려울 때 보는 도움말"):
+        st.markdown("- 먼저 조건 A와 조건 B에서 다르게 한 조건을 찾습니다.")
+        st.markdown("- 그래프에서 위아래로 크게 변한 선이 있는지 봅니다.")
+        st.markdown("- 결과 요약표에서 마지막 값과 변화량을 확인합니다.")
+        st.markdown("- 문장은 `조건 A는 ..., 조건 B는 ...`처럼 비교해서 씁니다.")
+        st.markdown("- 마지막에는 `따라서 나는 ...라고 판단했다`처럼 자신의 결론을 씁니다.")
+
+    # -----------------------------------------------------------------------
+    # 5. 관찰 기록 작성 (조건값·결과·질문 답안을 함께 저장)
+    # -----------------------------------------------------------------------
+    st.subheader("5. 관찰 기록 작성하기")
     with st.expander("기록할 때 확인할 점 보기"):
         for point in GUIDE[topic]["checks"]:
             st.markdown(f"- {point}")
@@ -396,48 +525,40 @@ if st.session_state.show:
         observation = st.text_area("그래프에서 관찰한 사실", placeholder="조건 A와 조건 B를 비교해서, 어떤 값이 어떻게 달라졌는지 적어 보세요.")
         evidence = st.text_area("표나 그래프에서 찾은 근거", placeholder="마지막 세대 값, 변화량, 최솟값·최댓값 등 숫자를 포함해 적어 보세요.")
         interpretation = st.text_area("나의 해석과 결론", placeholder="관찰한 결과가 왜 나타났는지 생명과학 개념과 연결해 설명해 보세요.")
-        saved = st.form_submit_button("탐구 기록 저장하기")
+        saved = st.form_submit_button("탐구 기록 저장하기 (예상·조건·결과·질문 답안 함께 저장)")
 
     if saved:
-        st.session_state.records.append({
+        record = {
             "탐구 주제": topic,
+            "깨는 평형 조건": BROKEN[topic],
             "탐구 질문": research_q,
             "그래프 보기 전 예상": prediction,
             "예상한 까닭": reason,
             "다르게 한 조건": changed,
             "같게 유지한 조건": fixed,
+            "조건 A 설정값": param_text(pa),
+            "조건 B 설정값": param_text(pb),
+            "결과 요약(자동)": summarize_for_record(summary),
             "관찰한 사실": observation,
             "근거": evidence,
             "해석과 결론": interpretation,
-        })
-        st.success("탐구 기록이 저장되었습니다.")
+        }
+        # 자료 해석 질문 답안을 함께 저장
+        for i, (q, ans) in enumerate(q_answers, start=1):
+            record[f"질문{i}"] = q
+            record[f"질문{i} 답안"] = ans
+        st.session_state.records.append(record)
+        st.success("탐구 기록이 저장되었습니다. (예상·조건·결과·질문 답안이 함께 저장되었습니다.)")
 
     if st.session_state.records:
         st.markdown("#### 저장된 탐구 기록")
+        st.markdown("<div class='warn'><b>꼭 확인하세요</b><br>저장된 기록은 새로고침하거나 창을 닫으면 사라집니다. 활동이 끝나면 아래 '탐구 기록 내려받기'로 반드시 파일을 저장하세요.</div>", unsafe_allow_html=True)
         records = pd.DataFrame(st.session_state.records)
         st.dataframe(records, use_container_width=True, hide_index=True)
         st.download_button("탐구 기록 내려받기", data=to_csv(records), file_name="hardy_weinberg_inquiry_records.csv", mime="text/csv")
         if st.button("저장된 탐구 기록 모두 지우기"):
             st.session_state.records = []
             st.rerun()
-
-    st.subheader("5. 자료 해석 질문")
-    st.markdown("""
-<div class="warn">
-<b>주의</b><br>
-아래 질문에는 예시 답안을 보여주지 않습니다. 자신이 실행한 조건 A, 조건 B의 그래프와 표를 근거로 직접 작성해 보세요.
-</div>
-""", unsafe_allow_html=True)
-
-    for i, q in enumerate(GUIDE[topic]["questions"], start=1):
-        st.text_area(f"질문 {i}. {q}", placeholder="그래프와 표에서 확인한 근거를 포함해 자신의 말로 작성하세요.", key=f"q_{topic}_{i}")
-
-    with st.expander("답을 쓰기 어려울 때 보는 도움말"):
-        st.markdown("- 먼저 조건 A와 조건 B에서 다르게 한 조건을 찾습니다.")
-        st.markdown("- 그래프에서 위아래로 크게 변한 선이 있는지 봅니다.")
-        st.markdown("- 결과 요약표에서 마지막 값과 변화량을 확인합니다.")
-        st.markdown("- 문장은 `조건 A는 ..., 조건 B는 ...`처럼 비교해서 씁니다.")
-        st.markdown("- 마지막에는 `따라서 나는 ...라고 판단했다`처럼 자신의 결론을 씁니다.")
 
 st.divider()
 st.caption("하디-바인베르크 법칙 학생 중심 탐구 수업용 Streamlit 웹앱")
